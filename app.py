@@ -260,6 +260,17 @@ def respond_ai(message, history):
 # Launch Gradio interface
 #----------------------------------------------------------------------------------------------------------------------------
 
-gr.ChatInterface(fn=respond_ai, title="Hari Adusumilli Twin").launch()
+#gr.ChatInterface(fn=respond_ai, title="Hari Adusumilli Twin").launch()
+demo = gr.ChatInterface(
+    fn=respond_ai,
+    title="Hari Adusumilli Twin"
+)
+
+port = int(os.environ.get("PORT", 7860))
+
+demo.launch(
+    server_name="0.0.0.0",
+    server_port=port
+)
 
     
