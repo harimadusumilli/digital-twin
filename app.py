@@ -1,6 +1,5 @@
 import os
 from openai import OpenAI
-from IPython.display import display, Markdown
 # import requests
 # import random
 # import re
