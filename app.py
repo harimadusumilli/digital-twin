@@ -259,9 +259,75 @@ def respond_ai(message, history):
 #----------------------------------------------------------------------------------------------------------------------------
 
 #gr.ChatInterface(fn=respond_ai, title="Hari Adusumilli Twin").launch()
+custom_css = """
+body, .gradio-container {
+    background: #000 !important;
+    color: #9acbff;
+}
+
+.gradio-container .prose, .gradio-container h1 {
+    color: #9acbff;
+}
+
+.gradio-container .user {
+    background-color: #e8c547 !important;
+    color: #4b1673;
+}
+
+.gradio-container .user .prose,
+.gradio-container .user .prose * {
+    color: #4b1673 !important;
+}
+
+.gradio-container textarea {
+    background: #000 !important;
+    color: #9acbff !important;
+    border: 2px solid #e8c547 !important;
+}
+
+.gradio-container textarea::placeholder {
+    color: #82a8ca;
+}
+"""
+
+theme_colors = {
+    "body_background_fill": "#000000",
+    "background_fill_primary": "#000000",
+    "background_fill_secondary": "#111111",
+    "block_background_fill": "#111111",
+    "panel_background_fill": "#000000",
+    "input_background_fill": "#000000",
+    "body_text_color": "#9acbff",
+    "block_label_text_color": "#9acbff",
+    "button_primary_background_fill": "#e8c547",
+    "button_primary_background_fill_hover": "#f4d875",
+    "button_primary_text_color": "#102a56",
+    "button_secondary_background_fill": "#e8c547",
+    "button_secondary_background_fill_hover": "#f4d875",
+    "button_secondary_text_color": "#102a56",
+    "button_cancel_background_fill": "#e8c547",
+    "button_cancel_background_fill_hover": "#f4d875",
+    "button_cancel_text_color": "#102a56",
+}
+dark_theme = gr.themes.Monochrome().set(
+    **theme_colors,
+    **{f"{name}_dark": color for name, color in theme_colors.items()},
+)
+
+with gr.Blocks(title="Hari Adusumilli Twin") as demo:
+    gr.ChatInterface(fn=respond_ai, chatbot=gr.Chatbot(label="Hari Adusumilli Digital Twin", show_label=True), api_visibility="private")
+
+
+##demo.launch(inbrowser=True, theme=dark_theme, share=True, css=custom_css, footer_links=["gradio", "settings", "runs"])
+
+
+
+
+
 demo = gr.ChatInterface(
     fn=respond_ai,
-    title="Hari Adusumilli Twin"
+     chatbot=gr.Chatbot(label="Digital Twin - Chat Bot", show_label=True), api_visibility="private",
+    title="Hari Adusumilli - Digital Twin"
 )
 
 port = int(os.environ.get("PORT", 7860))
