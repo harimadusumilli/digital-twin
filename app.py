@@ -1,12 +1,13 @@
 import os
 from openai import OpenAI
-# import requests
-# import random
-# import re
-# import uuid
-# import chromadb
-# import json
+#import requests
+#import random
+import re
+import uuid
+import chromadb
+#import json
 import gradio as gr
+from pprint import pprint
 
 
 #--------------------------------------------------------------------------------------------
@@ -125,7 +126,31 @@ Responsibilities included overseeing the development lifecycle, ensuring code qu
 Additional Experience:
 Dell – Contract Project Manager (March 2012- March 2013), Bridgewater Associates – Sr. Test Lead - Contract (July 2011 – Feb 2012),), Dev & Test Lead – Cordys’ R&D India, Volvo commercial finance, Inspire Tech & Satyam Computer Services Ltd."""
 
+document_education_skills = """
+Sir M.V.I.T
+Bachelor of Engineering - BE, Electrical, Electronics and Communications Engineering
+College: Sir.M.V.I.T
+AWS Certified Cloud Practitioner
+IBM Enterprise Design Thinking Practitioner
 
+Technical Skills:
+AI & Automation: Agentic AI, Generative AI, GitHub Copilot, TravAI, Playwright, pytest, Selenium, Gauge, Taiko, WATIR, Tool calling (AI - Python)D,CI/CD, Agile, Scrum, AWS, Databricks, Guidewire, ServiceNow, Informatica, 
+Java, Python, .Net, React, Angular, SQL, SQL Server, MongoDB, Dynatrace, JMeter, Mountebank-Service Virtualization
+"""
+
+document_addl_hobbies_info = """
+Additional Info:
+-I love cooking specially for friends and family. I enjoy experimenting with different cuisines and flavors. My favorite dishes to cook are Butter Chicken,
+Indian Chinese, Fish Fry and Pasta. I like cooking and sharing my culinary creations with others. I also enjoy trying out new recipes and exploring different cooking techniques. 
+I learn about recipes from Youtube or from my friends and family.
+- I played Tennis till I was in college. 
+- I also love a little reading in my free time, reading any interesting books or articles that catch my attention.
+
+
+-I enjoy playing the guitar and listening to a wide range of music genres. My favorite genres include rock, blues, and classical music. I often play guitar for relaxation 
+and entertainment. I also enjoy attending live music concerts and discovering new artists. Music is a big part of my hobby and I find it to be a great way to express myself 
+creatively. I also like to learn new songs and techniques on the guitar, and I like to record a tune or create my own arraangements of popular songs
+"""
 #------------------------------------------------------------------------------------
 # System Message
 #-----------------------------------------------------------------------------------------------------------------------
@@ -221,6 +246,155 @@ Example:
 Do not repeatedly announce that you are an AI or digital twin unless asked."""
 
 
+
+#--------------------------------------------------------------------------------
+# Chunking function
+#--------------------------------------------------------------------------------------------------
+# ".", "!" or "?" (optionally followed by closing quotes/brackets) that is followed by whitespace;
+# the lookahead (?=\s) avoids matching things like "3.14"
+SENTENCE_END = re.compile(r"[.!?][\"')\]]*(?=\s)")
+
+
+def _last_sentence_end(window: str) -> int:
+    """Return the index just after the last sentence end in window, or -1 if none."""
+    matches = list(SENTENCE_END.finditer(window))
+    return matches[-1].end() if matches else -1
+
+
+def _find_cut(window: str, half: int) -> int:
+    """Return the best cut index inside window, or -1 to keep the hard cut.
+
+    Boundaries are tried in priority order: paragraph break, newline, sentence end, space.
+    A boundary is accepted only if it lies past `half`.
+    """
+    for sep in ("\n\n", "\n"):
+        i = window.rfind(sep)  # rfind returns the LAST occurrence, or -1
+        if i != -1 and i + len(sep) > half:
+            return i + len(sep)  # cut just after the separator
+
+    pos = _last_sentence_end(window)
+    if pos > half:
+        return pos
+
+    i = window.rfind(" ")
+    if i != -1 and i + 1 > half:
+        return i + 1
+    return -1
+
+
+def chunk_document(text: str, chunk_size: int = 300, overlap: int = 30) -> list[str]:
+    """Split text into overlapping chunks of up to chunk_size characters.
+
+    Each chunk overlaps the previous one by `overlap` characters. If a chunk would
+    end mid-sentence, the cut moves back to the nearest natural boundary, tried in
+    this order: paragraph break, newline, sentence end, space. A boundary is used
+    only if it lies past the halfway point of the chunk.
+
+    Args:
+        text: the full document to split.
+        chunk_size: maximum number of characters per chunk.
+        overlap: number of characters shared between consecutive chunks.
+
+    Returns:
+        A list of chunk strings.
+    """
+    # Overlap must be smaller than chunk_size, otherwise the window never moves forward
+    if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("chunk_size must be positive and overlap must be between 0 and chunk_size - 1")
+
+    chunks = []                # accumulates the finished chunks
+    start = 0                  # index in `text` where the current chunk begins
+    half = chunk_size // 2     # a boundary must be located after this position to be used
+    while start < len(text):   # keep going until the whole text is covered
+        # Default cut: chunk_size characters ahead, or the end of the text if it comes sooner
+        end = min(start + chunk_size, len(text))
+
+        if end < len(text):  # only adjust when the chunk is cut mid-text (not the last chunk)
+            window = text[start:end]  # the candidate chunk we may shorten
+            cut = _find_cut(window, half)  # -1 means no suitable boundary; keep the hard cut
+            if cut != -1:
+                end = start + cut  # convert window-relative index to a text-wide index
+
+        chunks.append(text[start:end])  # save the chunk (end is exclusive)
+
+        if end >= len(text):  # reached the end of the document, so stop;
+            break             # otherwise we'd emit a chunk made only of overlap
+
+        # Next chunk starts `overlap` characters before this one ended, creating the overlap.
+        # max(..., start + 1) only matters when a chunk is shorter than the overlap; it guarantees
+        # forward progress so the loop can never get stuck.
+        start = max(end - overlap, start + 1)
+    return chunks  # list of all chunks, in document order
+
+
+#---------------------------------------------------------------------------------------------------------------------
+# RAG: Chunk, Embed & Store in ChromaDB
+#----------------------------------------------------------------------------------------------
+documents = [
+    {"text": document_professional_summary, "source": "Professional Summary"},
+    {"text": document_education_skills, "source": "Education and Skills"},
+    {"text": document_addl_hobbies_info, "source": "Additional Hobbies Information"}
+]
+
+chunks = []
+ids = []
+metadatas = []
+
+for doc in documents:
+    # Prepare the lists
+    chunks_ = chunk_document(doc["text"])
+    ids_ = [str(uuid.uuid4()) for _ in range(len(chunks_))]
+    metadatas_ = [{"source": doc["source"], "chunk_index": i} for i in range(len(chunks_))]
+    #.... Add to main lists
+    chunks.extend(chunks_)
+    ids.extend(ids_)
+    metadatas.extend(metadatas_)
+
+# Quick test: show the first 50 characters of the first two chunks
+for i, chunk in enumerate(chunks):
+    #print(f"----chunk {i + 1} (text): {len(chunk)} chars----")
+    print(f"Chunk {i + 1} (ID: {ids[i]}, Source: {metadatas[i]['source']}, Chunk Index: {metadatas[i]['chunk_index']},Length: {len(chunk)}):")
+    print(chunk)
+    print()  # add a blank line for readability between chunks
+
+response = client.embeddings.create(
+    model="text-embedding-3-small",
+    input=chunks
+)
+embeddings = [item.embedding for item in response.data]
+from pprint import pprint
+#pprint(response.data)
+
+# Now `embeddings` contains the vector representation for each chunk of text
+print(f"Created {len(embeddings)} embeddings")
+#print(f"Embedding dimensions: {len(embeddings[1]) if embeddings else 0}")
+
+# initialize ChromaDb Client for persistent storage
+chroma_client = chromadb.PersistentClient(path="./chroma_db_twin_hari")
+
+# initialize chroma db for in-memory storage
+#chroma_client = chroma_db.Client()
+
+collection = chroma_client.get_or_create_collection(name="Hari_Profile_digital_twin")
+
+if collection.get()["ids"]:
+    collection.delete(collection.get()["ids"])
+
+#pprint(collection.get())
+
+#Adding data to chroma Db
+collection.add(
+    ids=ids,
+    embeddings=embeddings,
+    metadatas=metadatas,
+    documents=chunks
+)
+
+#pprint(collection.get())
+
+# Get Embeddings for the chunks
+#pprint(collection.get(include=["documents","metadatas","embeddings"]))
+
 #---------------------------------------------------------------------------------------------------------------------
 # Main Response function
 #------------------------------------------------------------------------------------------------------------------------------------
@@ -229,9 +403,32 @@ def respond_ai(message, history):
     print("\n====================\n")
     print(f"User message:\n{message}\n")
     
+# RAG
+    #Generate embedding for a test query
+
+    #Embed the query using the same model we used for the chunks to ensure compatibility
+    #Tip: you will need to convery the query into a list
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[message]
+    )
+    query_embedding = response.data[0].embedding
+
+    #Search ChromaDB
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=5
+        
+    )
+
+    #Stitch the retrieved chunks to create the context for the response
+    context = "\n---\n".join(results['documents'][0])
+    print(f"User message:\n{message}\n")
+    print(f"Context retrieved this turn:\n{context}\n")
+    
     #update the system message with the retrieved context
-    system_message_enhanced = system_message + "\nContext:\n" + document_professional_summary
-    print("\nContext this turn:\n",system_message_enhanced)
+    system_message_enhanced = system_message + "\nContext:\n" + context
+
 
     # Build the full conversation: system message + past chat + the new user message
     messages = [{"role": "system", "content": system_message_enhanced}] + history + [{"role": "user", "content": message}]
@@ -320,13 +517,9 @@ with gr.Blocks(title="Hari Adusumilli Twin") as demo:
 
 ##demo.launch(inbrowser=True, theme=dark_theme, share=True, css=custom_css, footer_links=["gradio", "settings", "runs"])
 
-
-
-
-
 demo = gr.ChatInterface(
     fn=respond_ai,
-     chatbot=gr.Chatbot(label="Digital Twin - Chat Bot", show_label=True), api_visibility="private",
+     chatbot=gr.Chatbot(label="Digital Twin - Chatbot", show_label=True), api_visibility="private",
     title="Hari Adusumilli - Digital Twin"
 )
 
