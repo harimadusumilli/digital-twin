@@ -443,7 +443,7 @@ def respond_ai(message, history):
         messages=messages,
         #max_tokens=2000,
         temperature=1,
-        reasoning_effort="none"
+        reasoning_effort="none",
         tools=tools  # the tools the model is allowed to request
     )
 
