@@ -1,11 +1,11 @@
 import os
 from openai import OpenAI
-#import requests
-#import random
+import requests
+import random
 import re
 import uuid
 import chromadb
-#import json
+import json
 import gradio as gr
 from pprint import pprint
 
@@ -16,6 +16,7 @@ from pprint import pprint
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if OPENAI_API_KEY is None:
     raise Exception("API KEY is missing")
+
 client = OpenAI()
 
 #--------------------------------------------------------------------------------------------
@@ -443,14 +444,139 @@ def respond_ai(message, history):
         #max_tokens=2000,
         temperature=1,
         reasoning_effort="none"
-        #tools=tools  # the tools the model is allowed to request
+        tools=tools  # the tools the model is allowed to request
     )
 
     # The model's reply (named assistant_message so we don't overwrite the user's `message`)
     assistant_message = response.choices[0].message
     print("Reply from the model:", assistant_message)  # Debugging line
+    print("Tool calls:", assistant_message.tool_calls)  # None if the model asked for no tools
+    
+        # No tools requested: the model's text is the final answer, so return it to Gradio
+        # if not assistant_message.tool_calls:
+        #     return assistant_message.content
+    while assistant_message.tool_calls:  # Keep handling tool calls until there are none left
+        from pprint import pprint
+        pprint(assistant_message.tool_calls)
+    # Tools requested: first record the model's request in the conversation
+    # (the API requires this to come BEFORE the tool results)
+        messages.append(assistant_message)
+
+    # Run every requested tool; handle_tool_call returns a LIST of results, so we use extend
+    # (extend adds each item of the list; append would add the whole list as one item)
+        messages.extend(handle_tool_call(assistant_message.tool_calls))
+
+        # Call the model again with the updated conversation
+        response = client.chat.completions.create(
+            model="gpt-6-luna",
+            messages=messages,
+            #max_tokens=2000,
+            temperature=1,
+            reasoning_effort="none",
+            tools=tools
+        )
+        assistant_message = response.choices[0].message
+        print("Reply from the model:", assistant_message)  # Debugging line
+        print("Tool calls:", assistant_message.tool_calls)  # None if the model asked for no tools
              
     return assistant_message.content
+
+
+#-----------------------------------------------------------------------------------------------
+# Tool Call
+#-------------------------------------------------------------------------------------------------------------------------
+if os.getenv("PUSHOVER_TOKEN") is None:
+    raise Exception("PUSHOVER_TOKEN environment variable is not set.")
+else:
+    PUSHOVER_TOKEN = os.getenv("PUSHOVER_TOKEN")
+
+if os.getenv("PUSHOVER_USER") is None:
+    raise Exception("PUSHOVER_USER environment variable is not set.")
+else:
+    PUSHOVER_USER = os.getenv("PUSHOVER_USER")
+
+pushover_url = "https://api.pushover.net/1/messages.json"
+
+tools = [] #Getting ready by making tio blank so that we can append later the tool definitions
+
+# Function to send a message via Pushover
+def send_pushover_message(message: str):
+    payload = {
+        "token": PUSHOVER_TOKEN,
+        "user": PUSHOVER_USER,
+        "message": message
+    }
+    response = requests.post(pushover_url, data=payload)
+    if response.status_code != 200:
+        raise Exception(f"Failed to send Pushover message: {response.text}")
+    return response.json()
+
+# Definition of the Pushover message sending function for tool-calling
+send_pushover_message_function = {
+    "name": "send_pushover_message",
+    "description": "Sends a message via Pushover to Hari's Phone, use this to alert me about important events, completed tasks or time sensitive information",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "The message to send via Pushover to the user's device"
+            }
+        },
+        "required": ["message"]
+    }
+}
+
+tools.append({"type":"function", "function":send_pushover_message_function})
+#Simulate rolling a single six-sided die This is the second tool
+def roll_dice():
+    return random.randint(1, 6)
+
+#Describe the function of rolling a die for the LLM, including its name, description, and parameters
+roll_dice_function = {
+    "name": "roll_dice",
+    "description": "Simulate rolling a single six-sided die, use this when the user wants to roll a die",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}
+
+#Now add this tool to the list of available tools for the LLMt
+tools.append({"type":"function", "function":roll_dice_function})
+
+#--------------------------------------------------------------------------------------------------------
+# Tool Handler
+#--------------------------------------------------------------------------------------------------------------
+# Runs every tool the model asked for and returns a list of result messages
+def handle_tool_call(tool_calls):
+    #import json  # needed to convert the JSON text arguments into a Python dict
+    tool_results = []  # collects one result per tool call
+    for tool_call in tool_calls:  # the model may request several tools at once
+        function_name = tool_call.function.name
+        # arguments arrive as JSON text, e.g. '{"message": "Hi"}' -> {"message": "Hi"}
+        args = json.loads(tool_call.function.arguments)
+
+        if function_name == "send_pushover_message":
+        # Now send the notification using the parsed arguments
+            send_pushover_message(args["message"])  # This is the actual function call
+            content = f"Notification sent with message: {args['message']}"
+            print("Notification sent with message:", args["message"])
+        elif function_name == "roll_dice":
+            content = f"Rolled a die and got: {roll_dice()}"
+        else:
+            content = f"Unknown tool: {function_name}"
+    # The reply for the model; tool_call_id tells it which request this answers
+        tool_call_result = {
+            "role": "tool",
+            #"content": f"Notification sent with message: {args['message']}",
+            "content": content,
+            "tool_call_id": tool_call.id
+        }
+        tool_results.append(tool_call_result)  # append adds ONE item to the list
+
+    return tool_results
+
+
 #-------------------------------------------------------------------------------------------------------------------------------------------
 # Launch Gradio interface
 #----------------------------------------------------------------------------------------------------------------------------
