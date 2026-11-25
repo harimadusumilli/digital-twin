@@ -637,23 +637,41 @@ dark_theme = gr.themes.Monochrome().set(
     **{f"{name}_dark": color for name, color in theme_colors.items()},
 )
 
+force_dark = """
+() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("__theme") !== "dark") {
+        url.searchParams.set("__theme", "dark");
+        window.location.replace(url.toString());
+    }
+}
+"""
+
 with gr.Blocks(title="Hari Adusumilli Twin") as demo:
-    gr.ChatInterface(fn=respond_ai, chatbot=gr.Chatbot(label="Hari Adusumilli Digital Twin", show_label=True), api_visibility="private")
-
-
-##demo.launch(inbrowser=True, theme=dark_theme, share=True, css=custom_css, footer_links=["gradio", "settings", "runs"])
-
-demo = gr.ChatInterface(
-    fn=respond_ai,
-     chatbot=gr.Chatbot(label="Digital Twin - Chatbot", show_label=True), api_visibility="private",
-    title="Hari Adusumilli - Digital Twin"
-)
-
-port = int(os.environ.get("PORT", 7860))
+    gr.ChatInterface(
+        fn=respond_ai,
+        chatbot=gr.Chatbot(
+            label="Hari Adusumilli Digital Twin",
+            avatar_images=(None, "./Hari.jpg"),
+            show_label=True,
+        ),
+        title="Hari Adusumilli - Digital Twin",
+        description="Chat with an AI-powered version of Hari Adusumilli.",
+        examples=[
+            "What's your background?",
+            "What is your professional experience?",
+            "What are your hobbies and interests?",
+        ],
+        api_visibility="private",
+    )
 
 demo.launch(
     server_name="0.0.0.0",
-    server_port=port
+    server_port=int(os.environ.get("PORT", 7860)),
+    inbrowser=False,
+    share=False,
+    theme=dark_theme,
+    css=custom_css,
+    js=force_dark,
+    footer_links=["gradio", "settings", "runs"],
 )
-
-    
